@@ -1,0 +1,222 @@
+name: Build Calling APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;34.0.0"
+
+      - name: Create Android app
+        shell: bash
+        run: |
+          mkdir -p android-app/app/src/main/java/com/bharat/calling
+
+          cat > android-app/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = 'BharatCalling'
+          include ':app'
+          EOF
+
+          cat > android-app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > android-app/app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.bharat.calling'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.bharat.calling'
+                  minSdk 26
+                  targetSdk 35
+                  versionCode 1
+                  versionName '1.0'
+              }
+          }
+          EOF
+
+          cat > android-app/app/src/main/AndroidManifest.xml <<'EOF'
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET" />
+
+              <application
+                  android:label="Bharat AI Calling"
+                  android:allowBackup="false"
+                  android:theme="@android:style/Theme.Material.Light.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > android-app/app/src/main/java/com/bharat/calling/MainActivity.java <<'EOF'
+          package com.bharat.calling;
+
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.net.Uri;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.widget.Button;
+          import android.widget.EditText;
+          import android.widget.LinearLayout;
+          import android.widget.Toast;
+
+          public class MainActivity extends Activity {
+              private WebView web;
+              private String allowedHost;
+
+              @Override
+              public void onCreate(Bundle state) {
+                  super.onCreate(state);
+
+                  LinearLayout layout = new LinearLayout(this);
+                  layout.setOrientation(LinearLayout.VERTICAL);
+                  layout.setPadding(16, 16, 16, 16);
+
+                  EditText address = new EditText(this);
+                  address.setSingleLine(true);
+                  address.setHint("https://your-server-domain");
+                  address.setInputType(17);
+
+                  String previous = getPreferences(MODE_PRIVATE)
+                      .getString("server", "");
+                  address.setText(previous);
+
+                  Button connect = new Button(this);
+                  connect.setText("Open Calling Dashboard");
+
+                  web = new WebView(this);
+                  web.getSettings().setJavaScriptEnabled(true);
+                  web.getSettings().setDomStorageEnabled(true);
+                  web.getSettings().setAllowFileAccess(false);
+                  web.getSettings().setAllowContentAccess(false);
+
+                  web.setWebViewClient(new WebViewClient() {
+                      @Override
+                      public boolean shouldOverrideUrlLoading(
+                          WebView view,
+                          android.webkit.WebResourceRequest request
+                      ) {
+                          Uri uri = request.getUrl();
+                          return !"https".equals(uri.getScheme())
+                              || allowedHost == null
+                              || !allowedHost.equals(uri.getHost());
+                      }
+                  });
+
+                  connect.setOnClickListener(v -> {
+                      String server = address.getText()
+                          .toString().trim().replaceAll("/+$", "");
+
+                      Uri uri = Uri.parse(server);
+
+                      if (!"https".equals(uri.getScheme())
+                          || uri.getHost() == null
+                          || uri.getUserInfo() != null
+                          || uri.getQuery() != null
+                          || uri.getFragment() != null
+                          || (uri.getPath() != null
+                              && !uri.getPath().isEmpty())) {
+                          Toast.makeText(
+                              this,
+                              "Enter HTTPS server origin only",
+                              Toast.LENGTH_LONG
+                          ).show();
+                          return;
+                      }
+
+                      allowedHost = uri.getHost();
+
+                      getPreferences(MODE_PRIVATE).edit()
+                          .putString("server", server).apply();
+
+                      web.loadUrl(server + "/dashboard");
+                  });
+
+                  layout.addView(address);
+                  layout.addView(connect);
+                  layout.addView(
+                      web,
+                      new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT,
+                          0,
+                          1
+                      )
+                  );
+
+                  setContentView(layout);
+              }
+
+              @Override
+              protected void onDestroy() {
+                  if (web != null) web.destroy();
+                  super.onDestroy();
+              }
+          }
+          EOF
+
+      - name: Build APK
+        working-directory: android-app
+        run: gradle assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Bharat-AI-Calling-APK
+          path: android-app/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
