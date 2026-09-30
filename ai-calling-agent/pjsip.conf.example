@@ -1,0 +1,22 @@
+[transport-udp]
+type=transport
+protocol=udp
+bind=0.0.0.0:5060
+
+[gsm-gateway]
+type=endpoint
+transport=transport-udp
+context=reject-inbound
+disallow=all
+allow=alaw,ulaw
+aors=gsm-gateway
+; IP authenticated example. Match gateway configuration and restrict firewall.
+
+[gsm-gateway]
+type=aor
+contact=sip:192.168.1.100:5060
+
+[gsm-gateway-identify]
+type=identify
+endpoint=gsm-gateway
+match=192.168.1.100
